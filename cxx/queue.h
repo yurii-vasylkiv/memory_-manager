@@ -2,7 +2,8 @@
 
 #include <inttypes.h>
 #include <list>
-
+#include <condition_variable>
+#include <mutex>
 struct queue_item
 {
     int8_t type;
@@ -19,4 +20,7 @@ public:
     void clear();
 private:
     std::list<queue_item>queue_;
+    std::mutex mtx;
+    std::condition_variable cv;
+    bool ready{false};
 };
