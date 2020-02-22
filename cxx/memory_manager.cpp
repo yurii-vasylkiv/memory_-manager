@@ -4,19 +4,34 @@
 #include <stdio.h>
 #include <memory.h>
 #include <string.h>
+#include <math.h>
+#include <assert.h>
 #include "queue.h"
 
-static MemoryConfigurationSector configuration_sector   = {};
+static const char * MAGIC                               = "e10e720-6fb8-4fc0-8807-6e2201ac6e0d";
+#define CONFIGURATION_SECTOR_BASE_ADDRESS               0
+#define CONFIGURATION_SECTOR_OFFSET                     CONFIGURATION_SECTOR_BASE_ADDRESS + sizeof(ConfigurationU)
+#define DATA_SECTOR_SIZE                                (1024 /* KB */ * 1024 /* MB */ * 10)
+#define CONFIGURATION_AUTOSAVE_INTERVAL                 200
+#define PAGE_SIZE                                       256
+
+static ConfigurationU configurations                    = {};
+static MemoryConfigurationSector confSector             = {};
 static MemoryDataSector dataSectors[SectorsCount]       = {};
 static queue s_page_cb                                  = {};
 static pthread_t s_queue_monitor                        ;
 static uint8_t is_queue_monitor_running                 = {0};
 static uint8_t s_is_initialized                         = {0};
+static size_t s_configurations_autosave_interval_tick   = {0};
 
 
-int _add_data(Sector sector, uint8_t * buffer, size_t size);
-void _writeAsyncToFlashIfAnythingIsAvailable();
-void *_queue_monitor_task(void *arg);
+static int _add_data(Sector sector, uint8_t * buffer, size_t size);
+static void _write_async_to_flash_if_anything_is_available();
+static void *_queue_monitor_task(void *arg);
+static int _update_configurations();
+static int _read_configurations_from_flash(ConfigurationU * conf_container);
+static int _read_page_from_flash(int address, MemoryBuffer * page_container);
+
 
 int memory_manager_init()
 {
@@ -45,8 +60,169 @@ int memory_manager_configure()
         return 1;
     }
 
+    if(_read_configurations_from_flash(&configurations) != 0)
+    {
+        return 1;
+    }
+
+    if(memcmp(configurations.magic, MAGIC, 36) == 0) // magic sequences match)
+    {
+        // Configuration is correct to read
+        for (size_t sector = IMU; sector < SectorsCount; sector++)
+        {
+            dataSectors[sector].info = configurations.data_sectors[sector];
+        }
+    }
+    else
+    {
+        // configuration magic-number is missing
+
+        // fresh start
+        for (size_t sector = IMU; sector < SectorsCount; sector++)
+        {
+            dataSectors[sector].info.size           = DATA_SECTOR_SIZE;
+            dataSectors[sector].info.startAddress   = CONFIGURATION_SECTOR_OFFSET + DATA_SECTOR_SIZE * sector;
+            dataSectors[sector].info.endAddress     = dataSectors[sector].info.startAddress + dataSectors[sector].info.size;
+            dataSectors[sector].info.bytesWritten   = 0;
+
+            configurations.data_sectors[sector]     = dataSectors[sector].info;
+        }
+
+        // storing the magic number
+        memcpy(configurations.magic, MAGIC, 36);
+    }
+
     return 0;
 }
+
+int memory_manager_get_configurations(ConfigurationU * pConfigs)
+{
+    // validation
+    if(memcmp(configurations.magic, MAGIC, 36) == 0) // magic sequences match)
+    {
+        pConfigs = &configurations;
+        return 0;
+    }
+
+    pConfigs = NULL;
+    return 1;
+}
+
+int memory_manager_update_sensors_ground_data(GroundDataU * _data)
+{
+    if(_data == NULL)
+    {
+        return 1;
+    }
+
+    configurations.ground_altitude = _data->altitude;
+    configurations.ground_pressure = _data->pressure;
+
+    _update_configurations();
+    return 0;
+}
+
+
+int _read_configurations_from_flash(ConfigurationU * conf_container)
+{
+    assert(sizeof(ConfigurationU) < PAGE_SIZE);
+
+    if(conf_container == NULL)
+    {
+        return 1;
+    }
+
+    int bytesLeftToWrite = sizeof(ConfigurationU);
+    int configuration_pages = trunc(bytesLeftToWrite / PAGE_SIZE);
+    MemoryBuffer page;
+
+    if(configuration_pages == 0)
+    {
+        page = {};
+        if(_read_page_from_flash(CONFIGURATION_SECTOR_BASE_ADDRESS, &page) !=0)
+        {
+            return 1;
+        }
+
+        memmove(conf_container->bytes, page.data, bytesLeftToWrite);
+        return 0;
+    }
+
+    int bytesWritten = 0;
+    while (bytesLeftToWrite > PAGE_SIZE)
+    {
+        page = {};
+        if(_read_page_from_flash(CONFIGURATION_SECTOR_BASE_ADDRESS, &page) !=0)
+        {
+            return 1;
+        }
+
+        memmove(&conf_container->bytes[bytesWritten], page.data, PAGE_SIZE);
+        bytesLeftToWrite -= PAGE_SIZE;
+        bytesWritten += PAGE_SIZE;
+    }
+
+
+    page = {};
+    if(_read_page_from_flash(CONFIGURATION_SECTOR_BASE_ADDRESS, &page) !=0)
+    {
+        return 1;
+    }
+
+    memmove(conf_container->bytes, page.data, bytesLeftToWrite);
+    return 0;
+}
+
+
+int _read_page_from_flash(int address, MemoryBuffer * page_container)
+{
+    if(page_container == NULL)
+    {
+        return 1;
+    }
+
+    // simulate the memory read and the configuration sector is empty;
+    memset(page_container->data, 0, PAGE_SIZE);
+    return 0;
+}
+
+
+int _update_configurations()
+{
+    assert(sizeof(ConfigurationU) < PAGE_SIZE);
+
+    queue_item   item {};
+    item.type = Conf;
+    memmove(item.data, configurations.bytes, sizeof(ConfigurationU));
+    s_page_cb.push(item);
+    return 0;
+
+
+//    for (int i = 0; i < CONFIGURATION_DATA_SECTOR_BUFFER_COUNT; ++i)
+//    {
+//        confSector.buffers[i]
+//    }
+//
+//
+//    MemoryConfigurationSector confS {};
+//    int bytesToWrite = sizeof(ConfigurationU);
+//    int bytesWritten = 0;
+//    while (bytesToWrite > PAGE_SIZE)
+//    {
+//        queue_item item {};
+//        item.type = Conf;
+//        memmove(item.data, configurations.bytes, PAGE_SIZE);
+//        s_page_cb.push(item);
+//        memcpy(confS.buffers[confS.current_buffer_index].data, &configurations.bytes[bytesWritten], PAGE_SIZE);
+//        bytesToWrite -= PAGE_SIZE;
+//        bytesWritten += PAGE_SIZE;
+//        confS.current_buffer_index++;
+//    }
+//
+//    memmove(confS.buffers[confS.current_buffer_index]., &configurations.bytes[bytesWritten], bytesToWrite);
+    return 0;
+}
+
 
 int memory_manager_update(Data *_container)
 {
@@ -83,7 +259,7 @@ int memory_manager_update(Data *_container)
         memory_manager_add_flight_event_update(&_container->event.data);
         _container->event.updated = 0;
     }
-    
+
     return 0;
 }
 
@@ -146,7 +322,7 @@ int _add_data(Sector sector, uint8_t * buffer, size_t size)
         MemoryBuffer * temp_read = dataSectors[sector].read;
         dataSectors[sector].read = dataSectors[sector].write;
         dataSectors[sector].write = temp_read;
-        _writeAsyncToFlashIfAnythingIsAvailable();
+        _write_async_to_flash_if_anything_is_available();
 
         // safeguard check
         if(dataSectors[sector].write->info.bytesWritten >= 252)
@@ -161,17 +337,28 @@ int _add_data(Sector sector, uint8_t * buffer, size_t size)
     memcpy(currWriteBufferPosition, buffer, size);
     currentBuffer->info.bytesWritten += size;
 
+
+    s_configurations_autosave_interval_tick++;
+    if(s_configurations_autosave_interval_tick >= CONFIGURATION_AUTOSAVE_INTERVAL)
+    {
+        // it is time to update the configurations
+        _update_configurations();
+        // reset the timer
+        s_configurations_autosave_interval_tick = 0;
+    }
+
     return 0;
 }
 
 
-void _writeAsyncToFlashIfAnythingIsAvailable()
+void _write_async_to_flash_if_anything_is_available()
 {
-    for (uint8_t sector = IMU; sector < SectorsCount; sector++)
+    // free the read page
+    for (size_t sector = IMU; sector < SectorsCount; sector++)
     {
         if (dataSectors[sector].read->info.bytesWritten >= 252)
         {
-            queue_item item;
+            queue_item item {};
             item.type = sector;
             memmove(item.data, dataSectors[sector].read->data, 256);
             dataSectors[sector].read->info.bytesWritten = 0;
@@ -186,25 +373,28 @@ void *_queue_monitor_task(void *arg)
 
     while(is_queue_monitor_running)
     {
-        queue_item item;
+        queue_item item {};
         while(s_page_cb.pop(item))
         {
             switch(item.type)
             {
                 case IMU:
-                    printf("Monitor: IMU was flushed!\n");
+//                    printf("Monitor: IMU was flushed!\n");
                     break;
                 case Pressure:
-                    printf("Monitor: Pressure was flushed!\n");
+//                    printf("Monitor: Pressure was flushed!\n");
                     break;
                 case Cont:
-                    printf("Monitor: Cont was flushed!\n");
+//                    printf("Monitor: Cont was flushed!\n");
                     break;
                 case Event:
-                    printf("Monitor: Event was flushed!\n");
+//                    printf("Monitor: Event was flushed!\n");
+                    break;
+                case Conf:
+                    printf("Monitor: Configuration was flushed!\n");
                     break;
                 default:
-                    printf("Monitor: Wrong type! Wtf?\n");
+//                    printf("Monitor: Wrong type! Wtf?\n");
                     break;
             }
         }
@@ -212,4 +402,6 @@ void *_queue_monitor_task(void *arg)
 
     return NULL;
 }
+
+
 
