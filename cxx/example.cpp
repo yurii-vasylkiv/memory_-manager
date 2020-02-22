@@ -119,7 +119,7 @@ void *imu_data_generator(void *arg)
     while(1)
     {
         temp->inertial.updated = 1;
-        usleep(50000); // 200Hz
+        usleep(5); // 200Hz
     }
 }
 void *pressure_data_generator(void *arg)
@@ -133,7 +133,7 @@ void *pressure_data_generator(void *arg)
     while(1)
     {
         temp->pressure.updated = 1;
-        sleep(1); // 1 Hz
+        usleep(5); // 1 Hz
     }
 }
 void *continuity_data_generator(void *arg)
@@ -147,7 +147,7 @@ void *continuity_data_generator(void *arg)
     while(1)
     {
         temp->continuity.updated = 1;
-        sleep(10); // 0.1 Hz
+        usleep(5); // 0.1 Hz
     }
 }
 void *event_detector(void *arg)
@@ -160,7 +160,7 @@ void *event_detector(void *arg)
     while(1)
     {
         temp->event.updated = 1;
-        sleep(10); // 0.1 Hz
+        usleep(5); // 0.1 Hz
     }
 }
 
