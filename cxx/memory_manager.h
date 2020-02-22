@@ -11,7 +11,10 @@ typedef union
         int32_t accelerometer[3];
         int32_t gyroscope[3];
     };
-    uint8_t bytes[sizeof(uint32_t) + 3 * sizeof(int32_t) + 3 * sizeof(int32_t)];
+    uint8_t bytes[sizeof(uint32_t) * 1   +
+                  sizeof(int32_t ) * 3   +
+                  sizeof(int32_t ) * 3
+                  ];
 } IMUDataU;
 
 typedef union
@@ -20,7 +23,9 @@ typedef union
         uint32_t pressure;
         int32_t altitude;
     };
-    uint8_t bytes[sizeof(uint32_t) + sizeof(int32_t)];
+    uint8_t bytes[sizeof(uint32_t)  * 1 +
+                  sizeof(int32_t )  * 1
+                  ];
 } GroundDataU;
 
 typedef struct
@@ -37,7 +42,10 @@ typedef union
         float pressure;
         float temperature;
     };
-    uint8_t bytes[sizeof(uint32_t) + sizeof(float) + sizeof(float)];
+    uint8_t bytes[sizeof(uint32_t) * 1 +
+                  sizeof(float)    * 1 +
+                  sizeof(float)    * 1
+                  ];
 } PressureDataU;
 
 typedef struct
@@ -46,15 +54,9 @@ typedef struct
     PressureDataU data;
 } PressureData;
 
-typedef enum
-{
-    Open = 0 , Short = 1
-} ContinuityStatus;
-
-typedef enum
-{
-    Start = 0, Launch = 1, Apogee = 2, PostApogee = 3, Landed = 4
-}FlightEventStatus;
+typedef enum { Open  = 0, Short    = 1 } ContinuityStatus;
+typedef enum { Start = 0, Launch   = 1, Apogee = 2, PostApogee = 3, Landed = 4   } FlightEventStatus;
+typedef enum { IMU   = 0, Pressure = 1, Cont   = 2, Event      = 3, SectorsCount } Sector;
 
 
 typedef union
@@ -64,7 +66,9 @@ typedef union
         uint32_t timestamp;
         ContinuityStatus status;
     };
-    uint8_t bytes[sizeof(uint32_t) + sizeof(uint8_t)];
+    uint8_t bytes[sizeof(uint32_t) * 1 +
+                  sizeof(uint8_t ) * 1
+                  ];
 } ContinuityU;
 
 typedef struct
@@ -79,15 +83,17 @@ typedef union
         uint32_t timestamp;
         FlightEventStatus status;
     };
-    uint8_t bytes[sizeof(uint32_t) + sizeof(uint8_t)];
-}FlightEventU;
+    uint8_t bytes[sizeof(uint32_t) * 1 +
+                  sizeof(uint8_t ) * 1
+                  ];
+} FlightEventU;
 
 
 typedef struct
 {
     uint8_t updated;
     FlightEventU data;
-}FlightEvent;
+} FlightEvent;
 
 typedef struct
 {
@@ -96,7 +102,7 @@ typedef struct
     PressureData pressure;
     Continuity continuity;
     FlightEvent event;
-}Data;
+} Data;
 
 typedef struct
 {
@@ -128,6 +134,8 @@ typedef struct
     MemoryBuffer *write;
 } MemoryDataSector;
 
+
+
 enum {CONFIGURATION_DATA_SECTOR_BUFFER_COUNT = 1};
 typedef struct
 {
@@ -136,10 +144,7 @@ typedef struct
     uint8_t current_buffer_index;
 } MemoryConfigurationSector;
 
-
-typedef enum { IMU, Pressure, Cont, Event, SectorsCount} Sector;
 enum { Conf = 100 };
-
 typedef union
 {
     struct{
@@ -149,15 +154,39 @@ typedef union
         // counted as one 32-bit integer
         uint8_t flight_state;
         uint8_t power_mode;
-        uint8_t launch_acceleration_critical_value;
+        uint8_t launch_acceleration_critical_value_m_s2;
         uint8_t e_match_line_keep_active_for;
-
+        // 4 bytes
+        uint8_t  write_pre_launch_multiplier;
+        uint8_t  write_pre_apogee_multiplier;
+        uint8_t  write_post_apogee_multiplier;
+        uint8_t  write_ground_multiplier;
+        // 4 bytes
+        uint16_t altitude_main_recovery_m;
+        uint16_t write_interval_accelerometer_ms;
+        // 4 bytes
+        uint16_t write_interval_gyroscope_ms;
+        uint16_t write_interval_magnetometer_ms;
+        // 4 bytes
+        uint16_t write_interval_pressure_ms;
+        uint16_t write_interval_altitude_ms;
+        // 4 bytes
+        uint16_t write_interval_temperature_ms;
+        uint16_t write_interval_flight_state_ms;
+        // 4 bytes
+        uint16_t write_drogue_continuity_ms;
+        uint16_t write_main_continuity_ms;
+        // 4 bytes
         uint32_t ground_pressure;
         uint32_t ground_altitude;
         uint32_t current_system_time;
     };
 
-    uint8_t bytes[sizeof(MemorySectorInfo) * SectorsCount + sizeof(uint32_t) * 4];
+    uint8_t bytes[sizeof(uint8_t)          * 36             +
+                  sizeof(MemorySectorInfo) * SectorsCount   +
+                  sizeof(uint32_t)         * 10
+                  ]; // 140 bytes
+
     // as long as this union is less then 256 bytes it is easy to handle, but then we will have to use mupliple pages
     // to store this union at.
 } ConfigurationU;
